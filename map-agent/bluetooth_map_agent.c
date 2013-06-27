@@ -1998,9 +1998,12 @@ static gboolean bluetooth_map_set_read_status(BluetoothMapAgent *agent,
 		}
 
 		email_free_mail_data(&mail_data, 1);
-#endif
-	} else
+	} else {
 		goto fail;
+	}
+#else
+	}
+#endif
 
 	dbus_g_method_return(context);
 	DBG("-\n");
@@ -2054,9 +2057,12 @@ static gboolean bluetooth_map_set_delete_status(BluetoothMapAgent *agent,
 		}
 
 		email_free_mail_data(&mail_data, 1);
-#endif
-	} else
+	} else {
 		goto fail;
+	}
+#else
+	}
+#endif
 
 	dbus_g_method_return(context);
 	DBG("-\n");
