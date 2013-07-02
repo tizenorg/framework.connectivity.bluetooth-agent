@@ -1,20 +1,6 @@
 <manifest>
     <define>
         <domain name="bt_agent"/>
-	<request>
-		<smack request="device::app_logging" type="w"/>
-		<smack request="device::sys_logging" type="w"/>
-		<smack request="system::vconf" type="rwxat"/>
-		<smack request="system::share" type="rwxat"/>
-		<smack request="sys-assert::core" type="rwxat"/>
-		<smack request="dbus" type="w"/>
-		<smack request="msg-service" type="rwx"/>
-		<smack request="msg-service::db" type="rw"/>
-		<smack request="contacts-service" type="wx"/>
-	</request>
-	<permit>
-		<smack permit="dbus" type="rwx"/>
-	</permit>
     </define>
 
     <assign>

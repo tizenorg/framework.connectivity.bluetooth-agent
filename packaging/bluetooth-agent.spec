@@ -33,6 +33,7 @@ rm -rf %{buildroot}
 
 %files
 %manifest bluetooth-agent.manifest
+/opt/etc/smack/accesses.d/bluetooth-agent.rule
 %defattr(-, root, root)
 %{_bindir}/bluetooth-map-agent
 %{_bindir}/bluetooth-pb-agent
