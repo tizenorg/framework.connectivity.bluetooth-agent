@@ -1,7 +1,7 @@
 Name:       bluetooth-agent
 Summary:    Bluetooth agent packages that support various external profiles
-Version:    0.0.9
-Release:    2
+Version:    0.0.10
+Release:    1
 Group:      TO_BE/FILLED_IN
 License:    TO BE FILLED IN
 Source0:    %{name}-%{version}.tar.gz
