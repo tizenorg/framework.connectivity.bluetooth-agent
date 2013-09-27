@@ -30,6 +30,8 @@ make VERBOSE=1
 %install
 rm -rf %{buildroot}
 %make_install
+mkdir -p %{buildroot}/usr/share/license
+cp LICENSE %{buildroot}/usr/share/license/%{name}
 
 %files
 %manifest bluetooth-agent.manifest
@@ -41,3 +43,4 @@ rm -rf %{buildroot}
 %{_datadir}/dbus-1/services/org.bluez.pb_agent.service
 %{_datadir}/dbus-1/services/org.bluez.map_agent.service
 %{_datadir}/dbus-1/services/org.bluez.hfp_agent.service
+/usr/share/license/%{name}
