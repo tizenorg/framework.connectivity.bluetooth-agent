@@ -2638,7 +2638,7 @@ gchar *_bluetooth_pb_name_from_person_id(gint person_id)
 		return NULL;
 	}
 
-	contacts_db_get_record(_contacts_contact._uri,
+	status = contacts_db_get_record(_contacts_contact._uri,
 			contact_id,
 			&contact);
 
