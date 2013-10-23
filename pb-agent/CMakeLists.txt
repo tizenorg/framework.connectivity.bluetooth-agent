@@ -8,7 +8,7 @@ INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR})
 INCLUDE(FindPkgConfig)
 pkg_check_modules(pkgs_pb_agent
 		REQUIRED
-		dbus-glib-1 dlog contacts-service2 tapi vconf)
+		dbus-glib-1 dlog contacts-service2 tapi vconf capi-media-image-util libexif)
 
 FOREACH(flag ${pkgs_pb_agent_CFLAGS})
 	SET(EXTRA_CFLAGS "${EXTRA_CFLAGS} ${flag}")

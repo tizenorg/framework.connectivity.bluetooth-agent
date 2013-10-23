@@ -8,7 +8,7 @@ INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR})
 INCLUDE(FindPkgConfig)
 pkg_check_modules(pkgs_hfp_agent
 		REQUIRED
-		dbus-glib-1 vconf appsvc contacts-service2 tapi)
+		dbus-glib-1 vconf appsvc contacts-service2 tapi capi-appfw-application aul)
 
 FOREACH(flag ${pkgs_hfp_agent_CFLAGS})
 	SET(EXTRA_CFLAGS "${EXTRA_CFLAGS} ${flag}")

@@ -32,9 +32,11 @@
 #define BT_PB_SERVICE_INTERFACE		"org.bluez.PbAgent"
 
 #undef LOG_TAG
-#define LOG_TAG "BLUETOOTH_AGENT_PHONEBOOK"
-
+#define LOG_TAG "BT_PB_AGENT"
 #define DBG(fmt, args...) SLOGD(fmt, ##args)
 #define ERR(fmt, args...) SLOGE(fmt, ##args)
+
+#define DBG_SECURE(fmt, args...) SECURE_SLOGD(fmt, ##args)
+#define ERR_SECURE(fmt, args...) SECURE_SLOGE(fmt, ##args)
 
 #endif				/* __DEF_BT_AGENT_H_ */

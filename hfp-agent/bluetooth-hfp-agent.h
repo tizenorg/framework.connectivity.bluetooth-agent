@@ -66,8 +66,11 @@ typedef enum {
 #define BT_HFP_SERVICE "org.bluez.hfp_agent"
 
 #undef LOG_TAG
-#define LOG_TAG "BLUETOOTH_AGENT_HFP"
-
+#define LOG_TAG "BT_HFP_AGENT"
 #define DBG(fmt, args...) SLOGD(fmt, ##args)
 #define ERR(fmt, args...) SLOGE(fmt, ##args)
+
+#define DBG_SECURE(fmt, args...) SECURE_SLOGD(fmt, ##args)
+#define ERR_SECURE(fmt, args...) SECURE_SLOGE(fmt, ##args)
+
 #endif /* __DEF_BT_HFP_AGENT_H_ */

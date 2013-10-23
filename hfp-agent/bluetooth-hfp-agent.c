@@ -16,7 +16,6 @@
  * limitations under the License.
  *
  */
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +28,8 @@
 
 #include <TapiUtility.h>
 #include <ITapiSim.h>
+#include <app.h>
+#include <aul.h>
 
 #include "vconf.h"
 #include "vconf-keys.h"
@@ -79,6 +80,30 @@ static gboolean nrec_status = FALSE;
    format: tel:<number>
 */
 #define BT_MAX_TEL_NUM_STRING 20
+
+/**
+ * @brief Outgoing call type status
+ *
+ * 0 : Follow last call log \n
+ * 1 : Voice call \n
+ * 2 : Video call \n
+ */
+#define BT_FOLLOW_CALL_LOG 0
+#define BT_VOICE_CALL 1
+#define BT_VIDEO_CALL 2
+
+/**
+ * @brief The status of making outgoing calls with BT headsets
+ *
+ * 0 : Even when device locked \n
+ * 1 : Only when device unlocked \n
+ */
+#define BT_MO_EVEN_LOCKED 0
+#define BT_MO_ONLY_UNLOCKED 1
+
+#define BT_CHECK_SIGNAL_STRENGTH(rssi) \
+	if (rssi >= VCONFKEY_TELEPHONY_RSSI_4) \
+		rssi = VCONFKEY_TELEPHONY_RSSI_5
 
 typedef struct {
 	GObject parent;
@@ -175,25 +200,32 @@ static gboolean bt_hfp_agent_get_operator_name(BtHfpAgent *object,
 static gboolean bt_hfp_agent_nrec_status(BtHfpAgent *agent, gboolean status,
 				DBusGMethodInvocation *context);
 
+static gboolean bt_hfp_agent_connection_status(BtHfpAgent *agent, gboolean status,
+				DBusGMethodInvocation *context);
+
+static void __bt_hfp_agent_reg_sim_event(TapiHandle *handle, void *user_data);
+
+static void __bt_hfp_agent_dereg_sim_event(TapiHandle *handle);
+
 #include "bluetooth_hfp_agent_glue.h"
 
 static void bt_hfp_agent_init(BtHfpAgent *obj)
 {
-	DBG("+\n");
+	DBG("\n");
 
 	g_assert(obj != NULL);
 }
 
 static void bt_hfp_agent_finalize(GObject *obj)
 {
-	DBG("+\n");
+	DBG("\n");
 
 	G_OBJECT_CLASS(bt_hfp_agent_parent_class)->finalize(obj);
 }
 
 static void bt_hfp_agent_class_init(BtHfpAgentClass *klass)
 {
-	DBG("+\n");
+	DBG("\n");
 
 	GObjectClass *object_class = (GObjectClass *)klass;
 
@@ -207,7 +239,7 @@ static void bt_hfp_agent_class_init(BtHfpAgentClass *klass)
 
 static GQuark __bt_hfp_agent_error_quark(void)
 {
-	DBG("+\n");
+	DBG("\n");
 
 	static GQuark quark = 0;
 	if (!quark)
@@ -218,7 +250,7 @@ static GQuark __bt_hfp_agent_error_quark(void)
 
 static GError *__bt_hfp_agent_set_error(bt_hfp_agent_error_t error)
 {
-	DBG("+\n");
+	ERR("error[%d]\n", error);
 
 	switch (error) {
 	case BT_HFP_AGENT_ERROR_NOT_AVAILABLE:
@@ -271,7 +303,7 @@ static int __bt_hfp_agent_get_error(const char *error_message)
 		return BT_HFP_AGENT_ERROR_INTERNAL;
 	}
 
-	DBG("Error message = %s \n", error_message);
+	ERR("Error message = %s \n", error_message);
 
 	if (g_strcmp0(error_message, BT_ERROR_NOT_AVAILABLE) == 0)
 		return BT_HFP_AGENT_ERROR_NOT_AVAILABLE;
@@ -289,8 +321,7 @@ static int __bt_hfp_agent_get_error(const char *error_message)
 		return BT_HFP_AGENT_ERROR_NO_MEMORY;
 	else if (g_strcmp0(error_message, BT_ERROR_I_O_ERROR) == 0)
 		return BT_HFP_AGENT_ERROR_I_O_ERROR;
-	else if (g_strcmp0(error_message,
-				BT_ERROR_OPERATION_NOT_AVAILABLE) == 0)
+	else if (g_strcmp0(error_message, BT_ERROR_OPERATION_NOT_AVAILABLE) == 0)
 		return BT_HFP_AGENT_ERROR_OPERATION_NOT_AVAILABLE;
 	else if (g_strcmp0(error_message, BT_ERROR_INVLAID_DTMF) == 0)
 		return BT_HFP_AGENT_ERROR_INVALID_DTMF;
@@ -309,12 +340,10 @@ static int __bt_hfp_agent_dbus_method_send(const char *service,
 	va_list args;
 	int error;
 
-	DBG("__bt_hfp_agent_dbus_method_send +\n");
-
 	msg = dbus_message_new_method_call(service, path, interface,
 								method);
 	if (!msg) {
-		DBG("Unable to allocate new D-Bus %s message \n", method);
+		ERR("Unable to allocate new D-Bus %s message \n", method);
 		return BT_HFP_AGENT_ERROR_INTERNAL;
 	}
 
@@ -336,13 +365,13 @@ static int __bt_hfp_agent_dbus_method_send(const char *service,
 		dbus_message_unref(msg);
 
 		if (!reply) {
-			DBG("Error returned in method call\n");
+			ERR("Error returned in method call\n");
 			if (dbus_error_is_set(&err)) {
 				error = __bt_hfp_agent_get_error(err.message);
 				dbus_error_free(&err);
 				return error;
 			} else {
-				DBG("Error is not set\n");
+				ERR("Error is not set\n");
 				return BT_HFP_AGENT_ERROR_INTERNAL;
 			}
 		}
@@ -352,11 +381,12 @@ static int __bt_hfp_agent_dbus_method_send(const char *service,
 		dbus_message_unref(msg);
 	}
 
-	DBG("__bt_hfp_agent_dbus_method_send -\n");
-
 	return BT_HFP_AGENT_ERROR_NONE;
 }
 
+/**
+ * [Org.Hfp.App.Interface] interface functions
+ */
 static gboolean bt_hfp_agent_register_application(BtHfpAgent *agent,
 				const gchar *path, DBusGMethodInvocation *context)
 {
@@ -365,12 +395,9 @@ static gboolean bt_hfp_agent_register_application(BtHfpAgent *agent,
 	GError *error;
 	int ret;
 
-	DBG("bt_hfp_agent_register_application + \n");
-
 	if (path == NULL) {
-		DBG("Invalid Argument path\n");
-		error = __bt_hfp_agent_set_error(
-					BT_HFP_AGENT_ERROR_INVALID_PARAM);
+		ERR("Invalid Argument path\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INVALID_PARAM);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
@@ -399,8 +426,6 @@ static gboolean bt_hfp_agent_register_application(BtHfpAgent *agent,
 	}
 
 	dbus_g_method_return(context);
-
-	DBG("bt_hfp_agent_register_application - \n");
 	return TRUE;
 }
 
@@ -412,12 +437,9 @@ static gboolean bt_hfp_agent_unregister_application(BtHfpAgent *agent,
 	GError *error;
 	int ret;
 
-	DBG("bt_hfp_agent_unregister_application + \n");
-
 	if (path == NULL) {
-		DBG("Invalid Argument path\n");
-		error = __bt_hfp_agent_set_error(
-					BT_HFP_AGENT_ERROR_INVALID_PARAM);
+		ERR("Invalid Argument path\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INVALID_PARAM);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
@@ -446,8 +468,6 @@ static gboolean bt_hfp_agent_unregister_application(BtHfpAgent *agent,
 	}
 
 	dbus_g_method_return(context);
-
-	DBG("bt_hfp_agent_unregister_application - \n");
 	return TRUE;
 }
 
@@ -459,20 +479,17 @@ static gboolean bt_hfp_agent_incoming_call(BtHfpAgent *agent, const gchar *path,
 	char *sender;
 	int ret;
 
-	DBG("bt_hfp_agent_incoming_call + \n");
-
 	if (path == NULL || number == NULL) {
-		DBG("Invalid Arguments\n");
-		error = __bt_hfp_agent_set_error(
-					BT_HFP_AGENT_ERROR_INVALID_PARAM);
+		ERR("Invalid Arguments\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INVALID_PARAM);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
 	}
 
 	DBG("Application path = %s\n", path);
-	DBG("Phone number = %s\n", number);
 	DBG("Call id = %d\n", call_id);
+	DBG_SECURE("Phone number = %s\n", number);
 
 	sender = dbus_g_method_get_sender(context);
 
@@ -497,8 +514,6 @@ static gboolean bt_hfp_agent_incoming_call(BtHfpAgent *agent, const gchar *path,
 	}
 
 	dbus_g_method_return(context);
-
-	DBG("bt_hfp_agent_incoming_call - \n");
 	return TRUE;
 }
 
@@ -510,20 +525,17 @@ static gboolean bt_hfp_agent_outgoing_call(BtHfpAgent *agent, const gchar *path,
 	char *sender;
 	int ret;
 
-	DBG("bt_hfp_agent_outgoing_call + \n");
-
 	if (path == NULL || number == NULL) {
-		DBG("Invalid Arguments\n");
-		error = __bt_hfp_agent_set_error(
-					BT_HFP_AGENT_ERROR_INVALID_PARAM);
+		ERR("Invalid Arguments\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INVALID_PARAM);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
 	}
 
 	DBG("Application path = %s\n", path);
-	DBG("Phone number = %s\n", number);
 	DBG("Call id = %d\n", call_id);
+	DBG_SECURE("Phone number = %s\n", number);
 
 	sender = dbus_g_method_get_sender(context);
 
@@ -548,8 +560,6 @@ static gboolean bt_hfp_agent_outgoing_call(BtHfpAgent *agent, const gchar *path,
 	}
 
 	dbus_g_method_return(context);
-
-	DBG("bt_hfp_agent_outgoing_call - \n");
 	return TRUE;
 }
 
@@ -561,20 +571,16 @@ static gboolean bt_hfp_agent_change_call_status(BtHfpAgent *agent,
 	char *sender;
 	int ret;
 
-	DBG("bt_hfp_agent_change_call_status + \n");
-
 	if (path == NULL) {
-		DBG("Invalid Argument path\n");
-		error = __bt_hfp_agent_set_error(
-					BT_HFP_AGENT_ERROR_INVALID_PARAM);
+		ERR("Invalid Argument path\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INVALID_PARAM);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
 	}
 
 	DBG("Application path = %s\n", path);
-	DBG("Status = %d\n", status);
-	DBG("Call id = %d\n", call_id);
+	DBG("Call id[%d] :: Status[%d]\n", call_id, status);
 
 	sender = dbus_g_method_get_sender(context);
 
@@ -599,23 +605,78 @@ static gboolean bt_hfp_agent_change_call_status(BtHfpAgent *agent,
 	}
 
 	dbus_g_method_return(context);
-
-	DBG("bt_hfp_agent_change_call_status - \n");
 	return TRUE;
 }
 
+void __bt_append_entry(DBusMessageIter *iter,
+			const char *key, int type, void *val)
+{
+	DBusMessageIter entry;
+	DBusMessageIter value;
+	const char *str;
+	char signal[BT_SIGNAL_ARRAY_MAX] = { type, '\0' };
+
+	if (type == DBUS_TYPE_STRING) {
+		str = *((const char **) val);
+		if (str == NULL) {
+			return;
+		}
+	}
+
+	dbus_message_iter_open_container(iter, DBUS_TYPE_DICT_ENTRY, NULL, &entry);
+	dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &key);
+	dbus_message_iter_open_container(&entry, DBUS_TYPE_VARIANT,
+						signal, &value);
+	dbus_message_iter_append_basic(&value, type, val);
+	dbus_message_iter_close_container(&entry, &value);
+	dbus_message_iter_close_container(iter, &entry);
+}
+
+static gboolean bt_hfp_agent_get_properties(BtHfpAgent *agent,
+				DBusGMethodInvocation *context)
+{
+	DBusMessage *reply;
+	DBusMessageIter iter;
+	DBusMessageIter dict;
+	GError *error;
+
+	reply = dbus_g_method_get_reply(context);
+	if (!reply) {
+		ERR("Internal error\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INTERNAL);
+		dbus_g_method_return_error(context, error);
+		g_error_free(error);
+		return FALSE;
+	}
+
+	dbus_message_iter_init_append(reply, &iter);
+	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
+			DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
+			DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
+			DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &dict);
+
+	DBG("NREC status [%d]\n", nrec_status);
+	__bt_append_entry(&dict, "nrec", DBUS_TYPE_BOOLEAN, &nrec_status);
+	dbus_message_iter_close_container(&iter, &dict);
+	dbus_g_method_send_reply(context, reply);
+
+	return TRUE;
+}
+
+
+/**
+ * [Org.Hfp.Bluez.Interface] interface functions
+ */
 static gboolean bt_hfp_agent_answer_call(BtHfpAgent *agent, unsigned int call_id,
 				const gchar *path, const gchar *sender,
 				DBusGMethodInvocation *context)
 {
 	int ret;
 	GError *error;
-	DBG("+\n");
 
 	if (path == NULL || sender == NULL) {
-		DBG("Invalid Arguments\n");
-		error = __bt_hfp_agent_set_error(
-					BT_HFP_AGENT_ERROR_INVALID_PARAM);
+		ERR("Invalid Arguments\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INVALID_PARAM);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
@@ -639,8 +700,6 @@ static gboolean bt_hfp_agent_answer_call(BtHfpAgent *agent, unsigned int call_id
 	}
 
 	dbus_g_method_return(context);
-
-	DBG("-\n");
 	return TRUE;
 }
 
@@ -650,12 +709,10 @@ static gboolean bt_hfp_agent_release_call(BtHfpAgent *agent, unsigned int call_i
 {
 	int ret;
 	GError *error;
-	DBG("+\n");
 
 	if (path == NULL || sender == NULL) {
-		DBG("Invalid Arguments\n");
-		error = __bt_hfp_agent_set_error(
-					BT_HFP_AGENT_ERROR_INVALID_PARAM);
+		ERR("Invalid Arguments\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INVALID_PARAM);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
@@ -679,7 +736,6 @@ static gboolean bt_hfp_agent_release_call(BtHfpAgent *agent, unsigned int call_i
 	}
 
 	dbus_g_method_return(context);
-	DBG("-\n");
 	return TRUE;
 }
 
@@ -689,12 +745,10 @@ static gboolean bt_hfp_agent_reject_call(BtHfpAgent *agent, unsigned int call_id
 {
 	int ret;
 	GError *error;
-	DBG("+\n");
 
 	if (path == NULL || sender == NULL) {
-		DBG("Invalid Arguments\n");
-		error = __bt_hfp_agent_set_error(
-					BT_HFP_AGENT_ERROR_INVALID_PARAM);
+		ERR("Invalid Arguments\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INVALID_PARAM);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
@@ -718,7 +772,6 @@ static gboolean bt_hfp_agent_reject_call(BtHfpAgent *agent, unsigned int call_id
 	}
 
 	dbus_g_method_return(context);
-	DBG("-\n");
 	return TRUE;
 }
 
@@ -728,12 +781,10 @@ static gboolean bt_hfp_agent_threeway_call(BtHfpAgent *agent, gint value,
 {
 	int ret;
 	GError *error;
-	DBG("+\n");
 
 	if (path == NULL || sender == NULL) {
-		DBG("Invalid Arguments\n");
-		error = __bt_hfp_agent_set_error(
-					BT_HFP_AGENT_ERROR_INVALID_PARAM);
+		ERR("Invalid Arguments\n");
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INVALID_PARAM);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
@@ -757,68 +808,56 @@ static gboolean bt_hfp_agent_threeway_call(BtHfpAgent *agent, gint value,
 	}
 
 	dbus_g_method_return(context);
-	DBG("-\n");
 	return TRUE;
 }
 
-void __bt_append_entry(DBusMessageIter *iter,
-			const char *key, int type, void *val)
+static gboolean __bt_is_phone_locked(int *phone_lock_state)
 {
-	DBusMessageIter entry;
-	DBusMessageIter value;
-	const char *str;
-	char signal[BT_SIGNAL_ARRAY_MAX] = { type, '\0' };
+	int ret;
 
-	if (type == DBUS_TYPE_STRING) {
-		str = *((const char **) val);
-		if (str == NULL) {
-			return;
-		}
-	}
+	if (NULL == phone_lock_state)
+		return FALSE;
 
-	dbus_message_iter_open_container(iter, DBUS_TYPE_DICT_ENTRY,
-							NULL, &entry);
-	dbus_message_iter_append_basic(&entry, DBUS_TYPE_STRING, &key);
-
-	dbus_message_iter_open_container(&entry, DBUS_TYPE_VARIANT,
-						signal, &value);
-
-	dbus_message_iter_append_basic(&value, type, val);
-
-	dbus_message_iter_close_container(&entry, &value);
-
-	dbus_message_iter_close_container(iter, &entry);
-}
-
-static gboolean bt_hfp_agent_get_properties(BtHfpAgent *agent,
-				DBusGMethodInvocation *context)
-{
-	DBusMessage *reply;
-	DBusMessageIter iter;
-	DBusMessageIter dict;
-	GError *error;
-
-	DBG("bt_hfp_agent_get_properties + \n");
-
-	reply = dbus_g_method_get_reply(context);
-	if (!reply) {
-		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INTERNAL);
-		dbus_g_method_return_error(context, error);
-		g_error_free(error);
+	ret = vconf_get_int(VCONFKEY_IDLE_LOCK_STATE, phone_lock_state);
+	if (ret != 0) {
+		ERR("Failed to read  [%s]\n", VCONFKEY_IDLE_LOCK_STATE);
 		return FALSE;
 	}
 
-	dbus_message_iter_init_append(reply, &iter);
+	return TRUE;
+}
 
-	dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY,
-			DBUS_DICT_ENTRY_BEGIN_CHAR_AS_STRING
-			DBUS_TYPE_STRING_AS_STRING DBUS_TYPE_VARIANT_AS_STRING
-			DBUS_DICT_ENTRY_END_CHAR_AS_STRING, &dict);
+static gboolean __bt_get_outgoing_callapp_type(int *callapp_type)
+{
+	int ret;
 
-	__bt_append_entry(&dict, "nrec", DBUS_TYPE_BOOLEAN, &nrec_status);
-	dbus_message_iter_close_container(&iter, &dict);
-	dbus_g_method_send_reply(context, reply);
-	DBG("bt_hfp_agent_get_properties - \n");
+	if (NULL == callapp_type)
+		return FALSE;
+
+	ret = vconf_get_int(VCONFKEY_CISSAPPL_OUTGOING_CALL_TYPE_INT, callapp_type);
+	if (ret != 0) {
+		ERR("Failed to read  [%s]\n", VCONFKEY_CISSAPPL_OUTGOING_CALL_TYPE_INT);
+		return FALSE;
+	}
+
+	DBG(" [%s] = [%d]\n", VCONFKEY_CISSAPPL_OUTGOING_CALL_TYPE_INT, *callapp_type);
+
+	return TRUE;
+}
+
+static gboolean __bt_get_outgoing_call_condition(int *condition)
+{
+	int ret;
+
+	if (NULL == condition)
+		return FALSE;
+
+	ret = vconf_get_int(VCONFKEY_CISSAPPL_OUTGOING_CALL_CONDITIONS_INT, condition);
+	if (ret != 0) {
+		ERR("Failed to read  [%s]\n", VCONFKEY_CISSAPPL_OUTGOING_CALL_CONDITIONS_INT);
+		return FALSE;
+	}
+
 	return TRUE;
 }
 
@@ -841,21 +880,42 @@ static gboolean __bt_hfp_agent_make_call(const char *number)
 	return TRUE;
 }
 
+static gboolean __bt_hfp_agent_make_video_call(const char *mo_number)
+{
+	bundle *kb;
+
+	kb = bundle_create();
+	if (NULL == kb)
+		return FALSE;
+
+	bundle_add(kb, "KEY_CALL_TYPE", "MO");
+	bundle_add(kb, "number", mo_number);
+	aul_launch_app("com.samsung.vtmain", kb);
+	bundle_free(kb);
+
+	return TRUE;
+}
+
 static gboolean bt_hfp_agent_dial_last_num(BtHfpAgent *agent,
 				DBusGMethodInvocation *context)
 {
 	GError *error;
 	int error_code = BT_HFP_AGENT_ERROR_NONE;
 	char *last_number = NULL;
+	int log_type;
+	int callapp_type;
+	int phone_lock_state;
+	int condition;
 	contacts_list_h list = NULL;
 	contacts_query_h query = NULL;
 	contacts_filter_h filter = NULL;
 	contacts_record_h record = NULL;
 	unsigned int projections[] = {
 		_contacts_phone_log.address,
+		_contacts_phone_log.log_type,
 	};
 
-	DBG("+ \n");
+	DBG("\n");
 
 	if (contacts_connect2() != CONTACTS_ERROR_NONE) {
 		ERR(" contacts_connect2 failed \n");
@@ -939,8 +999,11 @@ static gboolean bt_hfp_agent_dial_last_num(BtHfpAgent *agent,
 	if (record == NULL)
 		goto done;
 
-	contacts_record_get_str(record, _contacts_phone_log.address,
-							&last_number);
+	if (contacts_record_get_str(record, _contacts_phone_log.address,
+				&last_number)!= CONTACTS_ERROR_NONE) {
+		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+		goto done;
+	}
 
 	if (last_number == NULL) {
 		ERR("No last number \n");
@@ -948,13 +1011,67 @@ static gboolean bt_hfp_agent_dial_last_num(BtHfpAgent *agent,
 		goto done;
 	}
 
-	/*Make Voice call*/
-	if (!__bt_hfp_agent_make_call(last_number)) {
-		ERR("Problem launching application \n");
+	if (!__bt_is_phone_locked(&phone_lock_state)) {
 		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+		goto done;
 	}
 
-	g_free(last_number);
+	if (!__bt_get_outgoing_callapp_type(&callapp_type)) {
+		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+		goto done;
+	}
+
+	if (!__bt_get_outgoing_call_condition(&condition)) {
+		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+		goto done;
+	}
+
+	if (condition == BT_MO_ONLY_UNLOCKED &&
+			phone_lock_state == VCONFKEY_IDLE_LOCK) {
+		ERR("Call failed. Phone is locked.\n");
+		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+		goto done;
+	}
+
+	switch (callapp_type) {
+		case BT_VOICE_CALL:
+			if (!__bt_hfp_agent_make_call(last_number)) {
+				ERR("Problem launching application \n");
+				error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+			}
+			break;
+		case BT_VIDEO_CALL:
+			if(!__bt_hfp_agent_make_video_call(last_number)) {
+				ERR("Problem launching application \n");
+				error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+			}
+			break;
+		case BT_FOLLOW_CALL_LOG:
+			if(contacts_record_get_int(record,
+				_contacts_phone_log.log_type,
+				&log_type) != CONTACTS_ERROR_NONE) {
+				error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+				break;
+			}
+			if (log_type == CONTACTS_PLOG_TYPE_VOICE_OUTGOING) {
+				if (!__bt_hfp_agent_make_call(last_number)) {
+					ERR("Problem launching application \n");
+					error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+				}
+			}
+			else if(log_type == CONTACTS_PLOG_TYPE_VIDEO_OUTGOING) {
+				if(!__bt_hfp_agent_make_video_call(last_number)) {
+					ERR("Problem launching application \n");
+					error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+				}
+			} else {
+				error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+			}
+			break;
+		default:
+			error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+			break;
+	}
 
 done:
 	if (list != NULL)
@@ -968,7 +1085,8 @@ done:
 
 	contacts_disconnect2();
 
-	DBG("-\n");
+	if (last_number != NULL)
+		g_free(last_number);
 
 	if (error_code == BT_HFP_AGENT_ERROR_NONE) {
 		dbus_g_method_return(context);
@@ -987,8 +1105,9 @@ static gboolean bt_hfp_agent_dial_num(BtHfpAgent *agent,
 {
 	GError *error;
 	int error_code;
-
-	DBG("+\n");
+	int callapp_type;
+	int phone_lock_state;
+	int condition;
 
 	if (number == NULL) {
 		ERR("Invalid Argument\n");
@@ -996,27 +1115,51 @@ static gboolean bt_hfp_agent_dial_num(BtHfpAgent *agent,
 		goto fail;
 	}
 
-	DBG("Number = %s \n", number);
+	DBG_SECURE("Number = %s \n", number);
 	DBG("flags = %d", flags);
 
-	/*TODO: Make use of flags*/
-
-	/*Make Voice call*/
-	if (!__bt_hfp_agent_make_call(number)) {
-		ERR("Problem launching application \n");
+	if (!__bt_is_phone_locked(&phone_lock_state)) {
 		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
 		goto fail;
 	}
 
-	dbus_g_method_return(context);
+	if (!__bt_get_outgoing_callapp_type(&callapp_type)) {
+		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+		goto fail;
+	}
 
-	DBG("-\n");
+	if (!__bt_get_outgoing_call_condition(&condition)) {
+		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+		goto fail;
+	}
+
+	if (condition == BT_MO_ONLY_UNLOCKED &&
+			phone_lock_state == VCONFKEY_IDLE_LOCK) {
+		ERR("Call failed. Phone is locked.\n");
+		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+		goto fail;
+	}
+
+	if (callapp_type == BT_VIDEO_CALL) {
+		if(!__bt_hfp_agent_make_video_call(number)) {
+			ERR("Problem launching application \n");
+			error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+			goto fail;
+		}
+	} else {
+		if (!__bt_hfp_agent_make_call(number)) {
+			ERR("Problem launching application \n");
+			error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+			goto fail;
+		}
+	}
+
+	dbus_g_method_return(context);
 	return TRUE;
 fail:
 	error = __bt_hfp_agent_set_error(error_code);
 	dbus_g_method_return_error(context, error);
 	g_error_free(error);
-	DBG("-\n");
 	return FALSE;
 }
 
@@ -1033,8 +1176,6 @@ static gboolean bt_hfp_agent_dial_memory(BtHfpAgent *agent, gint location,
 	unsigned int projections[] = {
 		_contacts_speeddial.number,
 	};
-
-	DBG("+\n");
 
 	DBG("location = %d \n", location);
 
@@ -1093,8 +1234,11 @@ static gboolean bt_hfp_agent_dial_memory(BtHfpAgent *agent, gint location,
 	if (record == NULL)
 		goto done;
 
-	contacts_record_get_str(record, _contacts_speeddial.number,
-							&number);
+	if (contacts_record_get_str(record, _contacts_speeddial.number,
+							&number)!= CONTACTS_ERROR_NONE) {
+		error_code = BT_HFP_AGENT_ERROR_INTERNAL;
+		goto done;
+	}
 
 	if (number == NULL) {
 		ERR("No number at the location \n");
@@ -1102,7 +1246,7 @@ static gboolean bt_hfp_agent_dial_memory(BtHfpAgent *agent, gint location,
 		goto done;
 	}
 
-	DBG("number %s\n", number);
+	DBG_SECURE("number %s\n", number);
 
 	/*Make Voice call*/
 	if (!__bt_hfp_agent_make_call(number)) {
@@ -1123,8 +1267,6 @@ done:
 
 	contacts_disconnect2();
 
-	DBG("-\n");
-
 	if (error_code == BT_HFP_AGENT_ERROR_NONE) {
 		dbus_g_method_return(context);
 		return TRUE;
@@ -1143,8 +1285,6 @@ static gboolean bt_hfp_agent_send_dtmf(BtHfpAgent *agent, const gchar *dtmf,
 	GError *error;
 	int ret;
 
-	DBG("+\n");
-
 	if (dtmf == NULL || path == NULL || sender == NULL) {
 		ERR("Invalid Argument\n");
 		error = __bt_hfp_agent_set_error(
@@ -1154,7 +1294,7 @@ static gboolean bt_hfp_agent_send_dtmf(BtHfpAgent *agent, const gchar *dtmf,
 		return FALSE;
 	}
 
-	DBG("Dtmf = %s \n", dtmf);
+	DBG_SECURE("Dtmf = %s \n", dtmf);
 	DBG("Application path = %s \n", path);
 	DBG("Sender = %s\n", sender);
 
@@ -1173,22 +1313,53 @@ static gboolean bt_hfp_agent_send_dtmf(BtHfpAgent *agent, const gchar *dtmf,
 
 	/*App Selector code here needed*/
 	dbus_g_method_return(context);
+	return TRUE;
+}
 
-	DBG("-\n");
+static gboolean __bt_hfp_agent_launch_voice_dial(gboolean activate)
+{
+	service_h service = NULL;
+
+	service_create(&service);
+
+	if (service == NULL) {
+		ERR("Service create failed");
+		return FALSE;
+	}
+
+	service_set_package(service, "com.samsung.svoice");
+	service_set_operation(service, SERVICE_OPERATION_DEFAULT);
+	service_add_extra_data(service, "domain", "bt_headset");
+
+	if (!activate)
+		service_add_extra_data(service, "action_type", "deactivate");
+
+	if (service_send_launch_request(service, NULL, NULL) !=
+						SERVICE_ERROR_NONE) {
+		ERR("launch failed");
+		service_destroy(service);
+		return FALSE;
+	}
+
+	service_destroy(service);
 	return TRUE;
 }
 
 static gboolean bt_hfp_agent_voice_dial(BtHfpAgent *agent, gboolean activate,
 				DBusGMethodInvocation *context)
 {
-	DBG("+\n");
+	GError *error;
 
 	DBG("Activate = %d \n", activate);
 
-	/*App Selector code here needed*/
-	dbus_g_method_return(context);
+	if (__bt_hfp_agent_launch_voice_dial(activate) != TRUE) {
+		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_APPLICATION);
+		dbus_g_method_return_error(context, error);
+		g_error_free(error);
+		return FALSE;
+	}
 
-	DBG("-\n");
+	dbus_g_method_return(context);
 	return TRUE;
 }
 
@@ -1199,33 +1370,27 @@ static gboolean bt_hfp_agent_get_battery_status(BtHfpAgent *object,
 	gint battery_capacity;
 	GError *error;
 
-	DBG("+\n");
-
 	if (vconf_get_int(VCONFKEY_SYSMAN_BATTERY_CHARGE_NOW,
 						&battery_chrg_status)) {
-		DBG("VCONFKEY_SYSMAN_BATTERY_CHARGE_NOW failed\n");
+		ERR("VCONFKEY_SYSMAN_BATTERY_CHARGE_NOW failed\n");
 		goto fail;
 	}
-
-	DBG("Status : %d\n", battery_chrg_status);
 
 	if (vconf_get_int(VCONFKEY_SYSMAN_BATTERY_CAPACITY,
 						&battery_capacity)) {
-		DBG("VCONFKEY_SYSMAN_BATTERY_CAPACITY failed\n");
+		ERR("VCONFKEY_SYSMAN_BATTERY_CAPACITY failed\n");
 		goto fail;
 	}
 
-	DBG("Capacity : %d\n", battery_capacity);
+	DBG("Status:[%d]  Capacity:[%d]\n", battery_chrg_status, battery_capacity);
 
 	dbus_g_method_return(context, battery_chrg_status, battery_capacity);
-	DBG("-\n");
 	return TRUE;
 
 fail:
 	error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_BATTERY_STATUS);
 	dbus_g_method_return_error(context, error);
 	g_error_free(error);
-	DBG("-\n");
 	return FALSE;
 }
 
@@ -1235,23 +1400,20 @@ static gboolean bt_hfp_agent_get_signal_quality(BtHfpAgent *object,
 	gint rssi;
 	GError *error;
 
-	DBG("+\n");
-
 	if (vconf_get_int(VCONFKEY_TELEPHONY_RSSI, &rssi)) {
-		DBG("VCONFKEY_TELEPHONY_RSSI failed\n");
+		ERR("VCONFKEY_TELEPHONY_RSSI failed\n");
 		goto fail;
 	}
 
+	BT_CHECK_SIGNAL_STRENGTH(rssi);
 	DBG("RSSI : %d \n", rssi);
 
 	dbus_g_method_return(context, rssi, BT_SIGNAL_QUALITY_BER);
-	DBG("-\n");
 	return TRUE;
 fail:
 	error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_SIGNAL_STATUS);
 	dbus_g_method_return_error(context, error);
 	g_error_free(error);
-	DBG("-\n");
 	return FALSE;
 }
 
@@ -1261,23 +1423,25 @@ static gboolean bt_hfp_agent_get_operator_name(BtHfpAgent *object,
 	char *operator_name;
 	GError *error;
 
-	DBG(" +\n");
-
 	operator_name = vconf_get_str(VCONFKEY_TELEPHONY_NWNAME);
 	if (NULL == operator_name) {
-		DBG("vconf_get_str failed \n");
+		ERR("vconf_get_str failed \n");
 		error = __bt_hfp_agent_set_error(BT_HFP_AGENT_ERROR_INTERNAL);
 		dbus_g_method_return_error(context, error);
 		g_error_free(error);
 		return FALSE;
 	}
 
-	DBG("operator_name  = [%s] \n", operator_name);
+	if (!g_utf8_validate(operator_name, -1, NULL)) {
+		free(operator_name);
+		operator_name = strdup("Unknown");
+	}
+
+	DBG_SECURE("operator_name  = [%s] \n", operator_name);
 
 	dbus_g_method_return(context, operator_name);
 	free(operator_name);
 
-	DBG(" -\n");
 	return TRUE;
 }
 
@@ -1286,30 +1450,34 @@ static gboolean bt_hfp_agent_nrec_status(BtHfpAgent *agent, gboolean status,
 {
 	DBusMessage *signal;
 
-	DBG("+\n");
-
 	DBG("NREC status = %d \n", status);
-	nrec_status = status;
+
+	if (status)
+		nrec_status = FALSE;
+	else
+		nrec_status = TRUE;
+
 	dbus_g_method_return(context);
 
 	/*Emit NREC Status change signal with value*/
 	signal = dbus_message_new_signal(BT_HFP_AGENT_OBJECT,
-				      	BT_HFP_AGENT_INTERFACE,
+					BT_HFP_AGENT_INTERFACE,
 					"NrecStatusChanged");
-	if (!signal)
+	if (!signal) {
+		ERR("Signal is NULL\n");
 		return FALSE;
+	}
 
 	if (!dbus_message_append_args(signal,
-				DBUS_TYPE_BOOLEAN, &status,
+				DBUS_TYPE_BOOLEAN, &nrec_status,
 				DBUS_TYPE_INVALID)) {
-		DBG("Signal appending failed\n");
+		ERR("Signal appending failed\n");
 		dbus_message_unref(signal);
 		return FALSE;
 	}
 
 	dbus_connection_send(gconn, signal, NULL);
 	dbus_message_unref(signal);
-	DBG("-\n");
 	return TRUE;
 }
 
@@ -1364,13 +1532,11 @@ static gboolean __bt_hfp_agent_dbus_method_variant_send(const char *path,
 	DBusError err;
 	DBusMessageIter iter;
 
-	DBG(" +\n");
-
 	msg = dbus_message_new_method_call(BLUEZ_SERVICE_NAME,
 			path, interface, method);
 
 	if (!msg) {
-		DBG("Unable to allocate new D-Bus %s message", method);
+		ERR("Unable to allocate new D-Bus %s message", method);
 		return FALSE;
 	}
 
@@ -1388,10 +1554,9 @@ static gboolean __bt_hfp_agent_dbus_method_variant_send(const char *path,
 	dbus_message_unref(msg);
 
 	if (!reply) {
-		DBG("Error returned in method call\n");
 		if (dbus_error_is_set(&err)) {
 			if (err.message != NULL) {
-				DBG("Error message = %s\n", err.message);
+				ERR("Error message = %s\n", err.message);
 			}
 			dbus_error_free(&err);
 		}
@@ -1399,8 +1564,6 @@ static gboolean __bt_hfp_agent_dbus_method_variant_send(const char *path,
 	}
 
 	dbus_message_unref(reply);
-
-	DBG(" -\n");
 	return TRUE;
 }
 
@@ -1409,17 +1572,16 @@ static gboolean __bt_hfp_agent_send_registration_status_changed(
 {
 	const char *property = g_strdup("RegistrationChanged");
 
-	DBG(" +\n");
+	DBG("status = [%d]", status);
 
 	if (!__bt_hfp_agent_dbus_method_variant_send(TELEPHONY_CSD_OBJECT_PATH,
 			TELEPHONY_CSD_INTERFACE,
 			BT_HFP_AGENT_SET_PROPERTY,
 			property, DBUS_TYPE_BYTE, &status)) {
-		DBG("__bt_hfp_agent_dbus_method_variant_send - ERROR\n");
+		ERR("__bt_hfp_agent_dbus_method_variant_send failed\n");
 		g_free((void *)property);
 		return FALSE;
 	}
-	DBG(" -\n");
 
 	g_free((void *)property);
 	return TRUE;
@@ -1430,19 +1592,18 @@ static gboolean __bt_hfp_agent_send_subscriber_number_changed(
 {
 	const char *property = g_strdup("SubscriberNumberChanged");
 
-	DBG(" +\n");
+	DBG_SECURE("number = [%s]", number);
 
 	if (!__bt_hfp_agent_dbus_method_variant_send(TELEPHONY_CSD_OBJECT_PATH,
 			TELEPHONY_CSD_INTERFACE,
 			BT_HFP_AGENT_SET_PROPERTY,
 			property,
 			DBUS_TYPE_STRING, &number)) {
-		DBG("__bt_hfp_agent_dbus_method_variant_send - ERROR\n");
+		ERR("__bt_hfp_agent_dbus_method_variant_send failed\n");
 		g_free((void *)property);
 		return FALSE;
 	}
 
-	DBG(" -\n");
 	g_free((void *)property);
 	return TRUE;
 }
@@ -1451,19 +1612,18 @@ static gboolean __bt_hfp_agent_send_signal_bar_changed(int signal_bar)
 {
 	const char *property = g_strdup("SignalBarsChanged");
 
-	DBG(" +\n");
+	DBG("Level = [%d]", signal_bar);
 
 	if (!__bt_hfp_agent_dbus_method_variant_send(TELEPHONY_CSD_OBJECT_PATH,
 			TELEPHONY_CSD_INTERFACE,
 			BT_HFP_AGENT_SET_PROPERTY,
 			property, DBUS_TYPE_INT32, &signal_bar)) {
-		DBG("__bt_hfp_agent_dbus_method_variant_send - ERROR\n");
+		ERR("__bt_hfp_agent_dbus_method_variant_send failed\n");
 		g_free((void *)property);
 		return FALSE;
 	}
 
 	g_free((void *)property);
-	DBG(" -\n");
 	return TRUE;
 }
 
@@ -1472,7 +1632,7 @@ static gboolean __bt_hfp_agent_send_battery_level_changed(int battery_level)
 	const char *property = g_strdup("BatteryBarsChanged");
 	int battery_status;
 
-	DBG(" +\n");
+	DBG("Level = [%d] \n", battery_level);
 
 	/* We need to send battery status ranging from 0-5 */
 	if (battery_level < 5)
@@ -1487,12 +1647,11 @@ static gboolean __bt_hfp_agent_send_battery_level_changed(int battery_level)
 			BT_HFP_AGENT_SET_PROPERTY,
 			property,
 			DBUS_TYPE_INT32, &battery_status)) {
-		DBG("__bt_hfp_agent_dbus_method_variant_send - ERROR\n");
+		ERR("__bt_hfp_agent_dbus_method_variant_send failed\n");
 		g_free((void *)property);
 		return FALSE;
 	}
 
-	DBG(" -\n");
 	g_free((void *)property);
 	return TRUE;
 }
@@ -1502,19 +1661,13 @@ static void __bt_hfp_agent_send_battery_level(void)
 	int ret;
 	int batt;
 
-	DBG(" +\n");
-
 	ret = vconf_get_int(VCONFKEY_SYSMAN_BATTERY_CAPACITY, &batt);
 	if (ret != 0) {
-		DBG("vconf_get_int failed err = %d \n", ret);
+		ERR("vconf_get_int failed err = %d \n", ret);
 		return;
 	}
 
-	DBG("Current battery Level = [%d] \n", batt);
-
 	__bt_hfp_agent_send_battery_level_changed(batt);
-
-	DBG(" -\n");
 }
 
 static void __bt_hfp_agent_send_signal_status(void)
@@ -1522,27 +1675,20 @@ static void __bt_hfp_agent_send_signal_status(void)
 	int ret;
 	int signal_level;
 
-	DBG(" +\n");
-
 	ret = vconf_get_int(VCONFKEY_TELEPHONY_RSSI, &signal_level);
 	if (ret != 0) {
-		DBG("vconf_get_int failed err = %d \n", ret);
+		ERR("vconf_get_int failed err = %d \n", ret);
 		return;
 	}
 
-	DBG("Current Signal Level = [%d] \n", signal_level);
-
+	BT_CHECK_SIGNAL_STRENGTH(signal_level);
 	__bt_hfp_agent_send_signal_bar_changed(signal_level);
-
-	DBG(" -\n");
 }
 
 static void __bt_hfp_agent_network_send( int service, int roam_status)
 {
 	int ret;
 	bt_hfp_agent_network_registration_status_t network_service;
-
-	DBG(" +\n");
 
 	switch (service) {
 	case VCONFKEY_TELEPHONY_SVCTYPE_NONE:
@@ -1557,7 +1703,7 @@ static void __bt_hfp_agent_network_send( int service, int roam_status)
 
 	ret = vconf_get_int(VCONFKEY_TELEPHONY_SVC_ROAM, &roam_status);
 	if (ret != 0) {
-		DBG("Get roaming status failed err = %d\n", ret);
+		ERR("Get roaming status failed err = %d\n", ret);
 		return;
 	}
 
@@ -1568,11 +1714,7 @@ static void __bt_hfp_agent_network_send( int service, int roam_status)
 	else
 		network_service = BT_HFP_AGENT_NETWORK_REG_STATUS_UNKOWN;
 
-	DBG("Network service = %d\n", network_service);
-
 	__bt_hfp_agent_send_registration_status_changed(network_service);
-
-	DBG(" -\n");
 }
 
 static void __bt_hfp_agent_send_network_status(void)
@@ -1581,12 +1723,9 @@ static void __bt_hfp_agent_send_network_status(void)
 	int roam_status;
 	int service;
 
-
-	DBG(" +\n");
-
 	ret = vconf_get_int(VCONFKEY_TELEPHONY_SVC_ROAM, &roam_status);
 	if (ret != 0) {
-		DBG("vconf_get_int failed for \n");
+		ERR("vconf_get_int failed for \n");
 		return;
 	}
 
@@ -1594,15 +1733,13 @@ static void __bt_hfp_agent_send_network_status(void)
 
 	ret = vconf_get_int(VCONFKEY_TELEPHONY_SVCTYPE, &service);
 	if (ret != 0) {
-		DBG("vconf_get_int failed\n");
+		ERR("vconf_get_int failed\n");
 		return;
 	}
 
 	DBG("service  = [%d] \n", service);
 
 	__bt_hfp_agent_network_send(service, roam_status);
-
-	DBG(" -\n");
 }
 
 static void __bt_hfp_agent_send_vconf_values(void)
@@ -1616,26 +1753,15 @@ static void __bt_hfp_agent_battery_status_cb(keynode_t *node)
 {
 	int batt = vconf_keynode_get_int(node);
 
-	DBG(" +\n");
-
-	DBG("Current Battery Level = [%d] \n", batt);
-
 	__bt_hfp_agent_send_battery_level_changed(batt);
-
-	DBG(" -\n");
 }
 
 static void __bt_hfp_agent_network_signal_status_cb(keynode_t *node)
 {
 	int signal_bar = vconf_keynode_get_int(node);
 
-	DBG(" +\n");
-
-	DBG("Current Signal Level = [%d] \n", signal_bar);
-
+	BT_CHECK_SIGNAL_STRENGTH(signal_bar);
 	__bt_hfp_agent_send_signal_bar_changed(signal_bar);
-
-	DBG(" -\n");
 }
 
 static void __bt_hfp_agent_network_register_status_cb(keynode_t *node)
@@ -1644,74 +1770,85 @@ static void __bt_hfp_agent_network_register_status_cb(keynode_t *node)
 	int roam_status;
 	int ret;
 
-	DBG(" +\n");
-
 	DBG("Current Signal Level = [%d] \n", service);
 
 	ret = vconf_get_int(VCONFKEY_TELEPHONY_SVC_ROAM, &roam_status);
 	if (ret != 0) {
-		DBG("Get roaming status failed err = %d\n", ret);
+		ERR("Get roaming status failed err = %d\n", ret);
 		return;
 	}
 
 	__bt_hfp_agent_network_send(service, roam_status);
-
-	DBG(" -\n");
 }
 
 static void __bt_hfp_agent_subscribe_vconf_updates(void)
 {
 	int ret;
 
-	DBG(" +\n");
+	DBG("\n");
 
 	ret = vconf_notify_key_changed(VCONFKEY_SYSMAN_BATTERY_CAPACITY,
 				(void *)__bt_hfp_agent_battery_status_cb, NULL);
 	if (0 != ret) {
-		DBG("Subsrciption to battery status failed err =  [%d]\n", ret);
+		ERR("Subsrciption to battery status failed err =  [%d]\n", ret);
 	}
 
 	ret = vconf_notify_key_changed(VCONFKEY_TELEPHONY_RSSI,
 			(void *)__bt_hfp_agent_network_signal_status_cb, NULL);
 	if (0 != ret) {
-		DBG("Subsrciption to netowrk signal failed err =  [%d]\n", ret);
+		ERR("Subsrciption to netowrk signal failed err =  [%d]\n", ret);
 	}
 
 	ret = vconf_notify_key_changed(VCONFKEY_TELEPHONY_SVCTYPE,
 			(void *)__bt_hfp_agent_network_register_status_cb, NULL);
 	if (0 != ret) {
-		DBG("Subsrciption to network failed err =  [%d]\n", ret);
+		ERR("Subsrciption to network failed err =  [%d]\n", ret);
 	}
-
-	DBG(" -\n");
 }
 
 static void __bt_hfp_agent_release_vconf_updates(void)
 {
 	int ret;
 
-	DBG(" +\n");
+	DBG("\n");
 
 	ret = vconf_ignore_key_changed(VCONFKEY_SYSMAN_BATTERY_CAPACITY,
 			(vconf_callback_fn)__bt_hfp_agent_battery_status_cb);
 	if (0 != ret) {
-		DBG("vconf_ignore_key_changed failed\n");
+		ERR("vconf_ignore_key_changed failed\n");
 	}
 
 	ret = vconf_ignore_key_changed(VCONFKEY_TELEPHONY_RSSI,
 		(vconf_callback_fn)__bt_hfp_agent_network_signal_status_cb);
 	if (0 != ret) {
-		DBG("vconf_ignore_key_changed failed\n");
+		ERR("vconf_ignore_key_changed failed\n");
 	}
 
 	ret = vconf_ignore_key_changed(VCONFKEY_TELEPHONY_SVCTYPE,
 		(vconf_callback_fn)__bt_hfp_agent_network_register_status_cb);
 	if (0 != ret) {
-		DBG("vconf_ignore_key_changed failed\n");
+		ERR("vconf_ignore_key_changed failed\n");
+	}
+}
+
+static gboolean bt_hfp_agent_connection_status(BtHfpAgent *agent, gboolean status,
+				DBusGMethodInvocation *context)
+{
+	DBG("HF device is %s\n", status ? "Connected" : "Disconnected");
+
+	if (status) {
+		__bt_hfp_agent_send_vconf_values();
+		__bt_hfp_agent_subscribe_vconf_updates();
+	} else {
+		__bt_hfp_agent_release_vconf_updates();
+		nrec_status = FALSE;
 	}
 
-	DBG(" -\n");
+	dbus_g_method_return(context);
+
+	return TRUE;
 }
+
 
 static void __bt_hfp_agent_dbus_init(BtHfpAgent *agent)
 {
@@ -1763,9 +1900,6 @@ static void __bt_hfp_agent_dbus_init(BtHfpAgent *agent)
 		ERR("Failed to get connection \n");
 		return;
 	}
-
-	__bt_hfp_agent_send_vconf_values();
-	__bt_hfp_agent_subscribe_vconf_updates();
 }
 
 static void  __bt_hfp_agent_tel_cb(TapiHandle *handle,
@@ -1776,8 +1910,19 @@ static void  __bt_hfp_agent_tel_cb(TapiHandle *handle,
 	TelSimMsisdnList_t *number;
 	gchar *subscriber_number;
 
-	if (data == NULL)
+	if (result == TAPI_API_SIM_LOCKED ||
+		result == TAPI_API_SIM_NOT_INITIALIZED ||
+		result == TAPI_API_SERVICE_NOT_READY) {
+		DBG("initializing the tapi event for SIM status \n");
+		__bt_hfp_agent_reg_sim_event(handle, user_data);
 		return;
+	}
+
+	if (data == NULL)
+	{
+		ERR("data == NULL \n");
+		return;
+	}
 
 	number = (TelSimMsisdnList_t *)data;
 	subscriber_number = g_strdup(number->list[0].num);
@@ -1785,16 +1930,51 @@ static void  __bt_hfp_agent_tel_cb(TapiHandle *handle,
 	g_free(subscriber_number);
 }
 
+
+static void __bt_hfp_agent_on_noti_sim_status (TapiHandle *handle,
+		const char *noti_id, void *data, void *user_data)
+{
+	TelSimCardStatus_t *status = data;
+	int tapi_result;
+
+	DBG("event TAPI_NOTI_SIM_STATUS received!! status[%d]", *status);
+
+	if (*status == TAPI_SIM_STATUS_SIM_INIT_COMPLETED) {
+		__bt_hfp_agent_dereg_sim_event(handle);
+		tapi_result = tel_get_sim_msisdn(handle, __bt_hfp_agent_tel_cb,
+					user_data);
+		if (tapi_result != TAPI_API_SUCCESS)
+			ERR("Fail to get sim info: %d", tapi_result);
+	}
+}
+
+static void __bt_hfp_agent_reg_sim_event (TapiHandle *handle, void *user_data)
+{
+	int ret;
+	ret = tel_register_noti_event(handle, TAPI_NOTI_SIM_STATUS,
+		__bt_hfp_agent_on_noti_sim_status, user_data);
+
+	if (ret != TAPI_API_SUCCESS)
+		ERR("event register failed(%d)", ret);
+}
+
+static void __bt_hfp_agent_dereg_sim_event (TapiHandle *handle)
+{
+	int ret;
+	ret = tel_deregister_noti_event(handle, TAPI_NOTI_SIM_STATUS);
+
+	if (ret != TAPI_API_SUCCESS)
+		ERR("event deregister failed(%d)", ret);
+}
+
 static void __bt_hfp_agent_sigterm_handler(int signo)
 {
-	DBG("+\n");
-
-	if (gmain_loop)
+	if (gmain_loop) {
 		g_main_loop_quit(gmain_loop);
-	else
+	} else {
+		DBG("Terminating HFP agent");
 		exit(0);
-
-	DBG("-\n");
+	}
 }
 
 int main(void)
@@ -1803,6 +1983,8 @@ int main(void)
 	BtHfpAgent *bt_hfp_obj = NULL;
 	struct sigaction sa;
 	int tapi_result;
+
+	DBG("Starting Bluetooth HFP agent");
 
 	g_type_init();
 
@@ -1820,13 +2002,6 @@ int main(void)
 	}
 
 	bt_hfp_obj = g_object_new(BT_HFP_TYPE_AGENT, NULL);
-	if (bt_hfp_obj == NULL) {
-		ERR("Failed to create BtHfpAgent instance \n");
-		if (gmain_loop)
-			g_main_loop_unref(gmain_loop);
-
-		return EXIT_FAILURE;
-	}
 
 	handle = tel_init(NULL);
 	tapi_result = tel_get_sim_msisdn(handle, __bt_hfp_agent_tel_cb,
@@ -1841,8 +2016,6 @@ int main(void)
 
 	tel_deinit(handle);
 
-	__bt_hfp_agent_release_vconf_updates();
-
 	if (bt_hfp_obj) {
 		dbus_g_connection_unregister_g_object(g_connection,
 						G_OBJECT(bt_hfp_obj));
@@ -1855,5 +2028,6 @@ int main(void)
 	if (gmain_loop)
 		g_main_loop_unref(gmain_loop);
 
+	DBG("Terminating Bluetooth HFP agent");
 	return 0;
 }

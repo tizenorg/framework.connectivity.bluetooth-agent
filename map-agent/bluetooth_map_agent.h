@@ -44,4 +44,7 @@ typedef enum {
 #define DBG(fmt, args...) SLOGD(fmt, ##args)
 #define ERR(fmt, args...) SLOGE(fmt, ##args)
 
+#define DBG_SECURE(fmt, args...) SECURE_SLOGD(fmt, ##args)
+#define ERR_SECURE(fmt, args...) SECURE_SLOGE(fmt, ##args)
+
 #endif /* __DEF_BT_AGENT_H_ */

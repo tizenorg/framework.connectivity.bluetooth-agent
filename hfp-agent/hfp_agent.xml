@@ -119,5 +119,10 @@
       <arg type="b" name="status"/>
     </method>
 
+    <method name="ConnectionStatus">
+      <annotation name="org.freedesktop.DBus.GLib.Async" value=""/>
+      <arg type="b" name="status"/>
+    </method>
+
   </interface>
 </node>

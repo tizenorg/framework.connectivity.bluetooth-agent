@@ -66,9 +66,6 @@ typedef struct {
 
 	TapiHandle *tapi_handle;
 	gchar *tel_number;
-
-	GHashTable *contact_list;
-
 	guint timeout_id;
 
 	PhoneBookType pb_type;
@@ -169,6 +166,9 @@ static gboolean bluetooth_pb_add_contact (BluetoothPbAgent *agent,
 					const char *filename,
 					GError **error);
 
+static gboolean bluetooth_pb_destroy_agent(BluetoothPbAgent *agent,
+					DBusGMethodInvocation *context);
+
 static void __bluetooth_pb_dbus_return_error(DBusGMethodInvocation *context,
 					gint code,
 					const gchar *message);
@@ -256,15 +256,6 @@ static void __bluetooth_pb_get_list_name(BluetoothPbAgent *agent,
 					const gchar *find_text,
 					GPtrArray *ptr_array);
 
-static void __bluetooth_pb_list_hash_reset(BluetoothPbAgent *agent);
-
-static gboolean __bluetooth_pb_list_hash_insert(BluetoothPbAgent *agent,
-						gint handle,
-						gint id);
-
-static gint __bluetooth_pb_list_hash_lookup_id(BluetoothPbAgent *agent,
-					gint handle);
-
 static void __bluetooth_pb_list_ptr_array_add(GPtrArray *ptr_array,
 						const gchar *name,
 						const gchar *number,
@@ -294,13 +285,9 @@ static void bluetooth_pb_agent_init(BluetoothPbAgent *agent)
 {
 	agent->bus = NULL;
 	agent->proxy = NULL;
-
 	agent->tapi_handle = NULL;
 	agent->tel_number = NULL;
-
-	agent->contact_list = NULL;
 	agent->timeout_id = 0;
-
 	agent->pb_type = TELECOM_NONE;
 }
 
@@ -345,11 +332,6 @@ static void bluetooth_pb_agent_finalize(GObject *obj)
 		agent->timeout_id = 0;
 	}
 
-	if (agent->contact_list) {
-		g_hash_table_destroy(agent->contact_list);
-		agent->contact_list = NULL;
-	}
-
 	if (agent->proxy) {
 		g_object_unref(agent->proxy);
 		agent->proxy = NULL;
@@ -367,11 +349,6 @@ static void bluetooth_pb_agent_finalize(GObject *obj)
 static void bluetooth_pb_agent_clear(BluetoothPbAgent *agent)
 {
 	DBG("+\n");
-
-	if (agent->contact_list) {
-		g_hash_table_destroy(agent->contact_list);
-		agent->contact_list = NULL;
-	}
 
 	agent->pb_type = TELECOM_NONE;
 }
@@ -409,7 +386,7 @@ static gboolean bluetooth_pb_get_phonebook(BluetoothPbAgent *agent,
 
 	guint new_missed_call = 0;
 
-	DBG("name: %s filter: %lld format: %d max_list_count: %d list_start_offset: %d\n",
+	DBG_SECURE("name: %s filter: %lld format: %d max_list_count: %d list_start_offset: %d\n",
 			name, filter, format, max_list_count, list_start_offset);
 
 	__bluetooth_pb_agent_timeout_add_seconds(agent);
@@ -453,7 +430,7 @@ static gboolean bluetooth_pb_get_phonebook_size(BluetoothPbAgent *agent,
 	guint new_missed_call = 0;
 	guint count = 0;
 
-	DBG("name: %s\n", name);
+	DBG_SECURE("name: %s\n", name);
 
 	__bluetooth_pb_agent_timeout_add_seconds(agent);
 
@@ -486,7 +463,7 @@ static gboolean bluetooth_pb_get_phonebook_list(BluetoothPbAgent *agent,
 
 	GPtrArray *ptr_array;
 
-	DBG("name: %s\n", name);
+	DBG_SECURE("name: %s\n", name);
 
 	__bluetooth_pb_agent_timeout_add_seconds(agent);
 
@@ -522,12 +499,11 @@ static gboolean bluetooth_pb_get_phonebook_entry(BluetoothPbAgent *agent,
 	PhoneBookType pb_type = TELECOM_NONE;
 
 	gint handle = 0;
-	gint cid = -1;
 	gchar *str = NULL;
 
 	const gchar *attr = NULL;
 
-	DBG("folder: %s id: %s filter: %ld format: %d\n",
+	DBG_SECURE("folder: %s id: %s filter: %ld format: %d\n",
 			folder, id, filter, format);
 
 	__bluetooth_pb_agent_timeout_add_seconds(agent);
@@ -553,25 +529,23 @@ static gboolean bluetooth_pb_get_phonebook_entry(BluetoothPbAgent *agent,
 	/* create index cache */
 	__bluetooth_pb_get_list(agent, pb_type, NULL);
 
-	cid = __bluetooth_pb_list_hash_lookup_id(agent, handle);
-
 	switch(pb_type) {
 	case TELECOM_PB:
 		if (handle == 0) {
 			str = _bluetooth_pb_vcard_contact_owner(agent->tel_number,
 								filter, format);
 		} else {
-			str = _bluetooth_pb_vcard_contact(cid, filter, format);
+			str = _bluetooth_pb_vcard_contact(handle, filter, format);
 		}
 		break;
 	case TELECOM_ICH:
-		str = _bluetooth_pb_vcard_call(cid, filter, format, "RECEIVED");
+		str = _bluetooth_pb_vcard_call(handle, filter, format, "RECEIVED");
 		break;
 	case TELECOM_OCH:
-		str = _bluetooth_pb_vcard_call(cid, filter, format, "DIALED");
+		str = _bluetooth_pb_vcard_call(handle, filter, format, "DIALED");
 		break;
 	case TELECOM_MCH:
-		str = _bluetooth_pb_vcard_call(cid, filter, format, "MISSED");
+		str = _bluetooth_pb_vcard_call(handle, filter, format, "MISSED");
 		break;
 	case TELECOM_CCH: {
 		contacts_record_h record = NULL;
@@ -579,13 +553,13 @@ static gboolean bluetooth_pb_get_phonebook_entry(BluetoothPbAgent *agent,
 		gint status;
 
 		status = contacts_db_get_record(_contacts_phone_log._uri,
-				cid, &record);
+				handle, &record);
 
 		if (status != CONTACTS_ERROR_NONE)
 			break;
 
 		attr = __bluetooth_pb_phone_log_get_log_type(record);
-		str = _bluetooth_pb_vcard_call(cid, filter, format, attr);
+		str = _bluetooth_pb_vcard_call(handle, filter, format, attr);
 
 		contacts_record_destroy(record, TRUE);
 		break;
@@ -741,10 +715,10 @@ static int __bluetooth_pb_agent_read_file(const char *file_path, char **stream)
 		return -1;
 	}
 
-	DBG("file_path = %s\n", file_path);
+	DBG_SECURE("file_path = %s\n", file_path);
 
 	if ((fp = fopen(file_path, "r+")) == NULL) {
-		DBG("Cannot open %s\n", file_path);
+		ERR_SECURE("Cannot open %s\n", file_path);
 		return -1;
 	}
 
@@ -753,7 +727,7 @@ static int __bluetooth_pb_agent_read_file(const char *file_path, char **stream)
 		DBG("file_attr.st_size = %d, size = %d\n", file_attr.st_size, received_file_size);
 
 		if (received_file_size <= 0) {
-			DBG("Some problem in the file size [%s]  \n", file_path);
+			ERR_SECURE("Some problem in the file size [%s]  \n", file_path);
 			fclose(fp);
 			fp = NULL;
 			return -1;
@@ -766,7 +740,7 @@ static int __bluetooth_pb_agent_read_file(const char *file_path, char **stream)
 			return -1;
 		}
 	} else {
-		DBG("Some problem in the file [%s]  \n", file_path);
+		ERR_SECURE("Some problem in the file [%s]  \n", file_path);
 		fclose(fp);
 		fp = NULL;
 		return -1;
@@ -779,7 +753,7 @@ static int __bluetooth_pb_agent_read_file(const char *file_path, char **stream)
 			fclose(fp);
 			fp = NULL;
 		}
-		DBG("Cannot open %s\n", file_path);
+		DBG_SECURE("Cannot open %s\n", file_path);
 		return -1;
 	}
 
@@ -803,7 +777,7 @@ static gboolean bluetooth_pb_add_contact(BluetoothPbAgent *agent, const char *fi
 	int err = 0;
 	char *stream = NULL;
 
-	DBG("file_path = %s\n", filename);
+	DBG_SECURE("file_path = %s\n", filename);
 
 	err = contacts_svc_connect();
 	DBG("contact_db_service_connect fucntion call [error] = %d \n", err);
@@ -1270,6 +1244,7 @@ static void __bluetooth_pb_get_vcards(BluetoothPbAgent *agent,
 	status = contacts_db_get_records_with_query(query, offset, limit, &record_list);
 
 	if (status != CONTACTS_ERROR_NONE) {
+		contacts_list_destroy(record_list, TRUE);
 		contacts_query_destroy(query);
 		return;
 	}
@@ -1325,7 +1300,6 @@ static void __bluetooth_pb_get_contact_list(BluetoothPbAgent *agent,
 	contacts_list_h record_list = NULL;
 
 	gint status;
-	int i = 1;
 
 	/* Add owner */
 	if (ptr_array) {
@@ -1345,8 +1319,10 @@ static void __bluetooth_pb_get_contact_list(BluetoothPbAgent *agent,
 	status = contacts_db_get_records_with_query(query,
 			-1, -1, &record_list);
 
-	if (status != CONTACTS_ERROR_NONE)
+	if (status != CONTACTS_ERROR_NONE) {
+		contacts_list_destroy(record_list, TRUE);
 		return;
+	}
 
 	status = contacts_list_first(record_list);
 
@@ -1354,8 +1330,6 @@ static void __bluetooth_pb_get_contact_list(BluetoothPbAgent *agent,
 		contacts_list_destroy(record_list, TRUE);
 		return;
 	}
-
-	__bluetooth_pb_list_hash_reset(agent);
 
 	do {
 		contacts_record_h record;
@@ -1377,8 +1351,6 @@ static void __bluetooth_pb_get_contact_list(BluetoothPbAgent *agent,
 		if (status != CONTACTS_ERROR_NONE)
 			continue;
 
-		__bluetooth_pb_list_hash_insert(agent, i, id);
-
 		/* create list */
 		if (ptr_array) {
 			gchar *name;
@@ -1388,13 +1360,11 @@ static void __bluetooth_pb_get_contact_list(BluetoothPbAgent *agent,
 			number = _bluetooth_pb_number_from_person_id(id);
 
 			__bluetooth_pb_list_ptr_array_add(ptr_array,
-					name, number, i);
+					name, number, id);
 
 			g_free(name);
 			g_free(number);
 		}
-
-		i++;
 
 	} while (contacts_list_next(record_list) == CONTACTS_ERROR_NONE);
 
@@ -1408,7 +1378,6 @@ static void __bluetooth_pb_get_phone_log_list(BluetoothPbAgent *agent,
 	contacts_list_h record_list = NULL;
 
 	gint status;
-	int i = 1;
 
 	status = contacts_db_get_records_with_query(query,
 			-1, -1, &record_list);
@@ -1422,8 +1391,6 @@ static void __bluetooth_pb_get_phone_log_list(BluetoothPbAgent *agent,
 		contacts_list_destroy(record_list, TRUE);
 		return;
 	}
-
-	__bluetooth_pb_list_hash_reset(agent);
 
 	do {
 		contacts_record_h record;
@@ -1445,8 +1412,6 @@ static void __bluetooth_pb_get_phone_log_list(BluetoothPbAgent *agent,
 		if (status != CONTACTS_ERROR_NONE)
 			continue;
 
-		__bluetooth_pb_list_hash_insert(agent, i, id);
-
 		/* create list */
 		if (ptr_array) {
 			gchar *name;
@@ -1460,12 +1425,10 @@ static void __bluetooth_pb_get_phone_log_list(BluetoothPbAgent *agent,
 					&number);
 
 			__bluetooth_pb_list_ptr_array_add(ptr_array,
-					name, number, i);
+					name, number, id);
 
 			g_free(name);
 		}
-
-		i++;
 
 	} while (contacts_list_next(record_list) == CONTACTS_ERROR_NONE);
 
@@ -1549,8 +1512,10 @@ static void __bluetooth_pb_get_contact_list_number(BluetoothPbAgent *agent,
 			from - 1 , offset,
 			&record_list);
 
-	if (status != CONTACTS_ERROR_NONE)
+	if (status != CONTACTS_ERROR_NONE) {
+		contacts_list_destroy(record_list, TRUE);
 		return;
+	}
 
 	status = contacts_list_first(record_list);
 
@@ -1626,8 +1591,10 @@ static void __bluetooth_pb_get_phone_log_list_number(BluetoothPbAgent *agent,
 			from - 1 , offset,
 			&record_list);
 
-	if (status != CONTACTS_ERROR_NONE)
+	if (status != CONTACTS_ERROR_NONE) {
+		contacts_list_destroy(record_list, TRUE);
 		return;
+	}
 
 	status = contacts_list_first(record_list);
 	if (status != CONTACTS_ERROR_NONE) {
@@ -1730,8 +1697,10 @@ static void __bluetooth_pb_get_contact_list_name(BluetoothPbAgent *agent,
 	status = contacts_db_get_records_with_query(query,
 			-1, -1, &record_list);
 
-	if (status != CONTACTS_ERROR_NONE)
+	if (status != CONTACTS_ERROR_NONE) {
+		contacts_list_destroy(record_list, TRUE);
 		return;
+	}
 
 	status = contacts_list_first(record_list);
 
@@ -1771,6 +1740,7 @@ static void __bluetooth_pb_get_contact_list_name(BluetoothPbAgent *agent,
 
 		i++;
 	} while (contacts_list_next(record_list) == CONTACTS_ERROR_NONE);
+	contacts_list_destroy(record_list, TRUE);
 }
 
 static void __bluetooth_pb_get_phone_log_list_name(BluetoothPbAgent *agent,
@@ -1788,8 +1758,10 @@ static void __bluetooth_pb_get_phone_log_list_name(BluetoothPbAgent *agent,
 			-1, -1,
 			&record_list);
 
-	if (status != CONTACTS_ERROR_NONE)
+	if (status != CONTACTS_ERROR_NONE) {
+		contacts_list_destroy(record_list, TRUE);
 		return;
+	}
 
 	status = contacts_list_first(record_list);
 
@@ -1881,41 +1853,6 @@ static void __bluetooth_pb_get_list_name(BluetoothPbAgent *agent,
 		contacts_query_destroy(query);
 }
 
-static void __bluetooth_pb_list_hash_reset(BluetoothPbAgent *agent)
-{
-	if(agent->contact_list)
-		g_hash_table_destroy(agent->contact_list);
-
-	agent->contact_list = g_hash_table_new(g_direct_hash, g_direct_equal);
-}
-
-static gboolean __bluetooth_pb_list_hash_insert(BluetoothPbAgent *agent,
-						gint handle,
-						gint id)
-{
-	if (agent->contact_list == NULL)
-		return FALSE;
-
-	g_hash_table_insert(agent->contact_list,
-			GINT_TO_POINTER(handle), GINT_TO_POINTER(id));
-
-	return TRUE;
-}
-
-static gint __bluetooth_pb_list_hash_lookup_id(BluetoothPbAgent *agent,
-					gint handle)
-{
-	gint id;
-
-	if (agent->contact_list == NULL)
-		return 0;
-
-	id = GPOINTER_TO_INT(g_hash_table_lookup(agent->contact_list,
-				GINT_TO_POINTER(handle)));
-
-	return id;
-}
-
 static void __bluetooth_pb_list_ptr_array_add(GPtrArray *ptr_array,
 						const gchar *name,
 						const gchar *number,
@@ -1960,10 +1897,12 @@ static void __bluetooth_pb_list_ptr_array_free(gpointer data)
 
 static void __bluetooth_pb_agent_signal_handler(int signum)
 {
-	if (mainloop)
+	if (mainloop) {
 		g_main_loop_quit(mainloop);
-	else
+	} else {
+		DBG("Terminate Bluetooth PBAP agent");
 		exit(0);
+	}
 }
 
 
@@ -2020,8 +1959,10 @@ static void __bluetooth_pb_tel_callback(TapiHandle *handle,
 
 	__bluetooth_pb_agent_dbus_init(agent);
 
-	number = (TelSimMsisdnList_t *)data;
-	agent->tel_number = g_strdup(number->list[0].num);
+	if (data != NULL) {
+		number = (TelSimMsisdnList_t *)data;
+		agent->tel_number = g_strdup(number->list[0].num);
+	}
 
 	tel_deinit(agent->tapi_handle);
 	agent->tapi_handle = NULL;
@@ -2085,7 +2026,14 @@ static void __bluetooth_pb_agent_dbus_init(BluetoothPbAgent *agent)
 			G_OBJECT(agent));
 }
 
-int main(int argc, char **argv)
+static gboolean bluetooth_pb_destroy_agent(BluetoothPbAgent *agent,
+					DBusGMethodInvocation *context)
+{
+	g_main_loop_quit(mainloop);
+	return TRUE;
+}
+
+int main(void)
 {
 	BluetoothPbAgent *agent;
 
@@ -2093,6 +2041,7 @@ int main(int argc, char **argv)
 	gint tapi_result;
 
 	struct sigaction sa;
+	DBG("Starting Bluetooth PBAP agent");
 
 	g_type_init();
 
@@ -2137,23 +2086,21 @@ int main(int argc, char **argv)
 
 	g_main_loop_run(mainloop);
 
-	DBG("Terminate the bluetooth-pb-agent\n");
-
-	if (agent) {
-		contacts_db_remove_changed_cb(_contacts_event._uri,
-				__bluetooth_pb_contact_changed,
-				g_object_ref(agent));
-
-		g_object_unref(agent);
+	if (contacts_db_remove_changed_cb(_contacts_event._uri,
+			__bluetooth_pb_contact_changed,
+			g_object_ref(agent)) != CONTACTS_ERROR_NONE) {
+		DBG("Cannot remove changed callback");
 	}
 
+	g_object_unref(agent);
 
-	contacts_disconnect2();
+	if (contacts_disconnect2() != CONTACTS_ERROR_NONE)
+		DBG("contacts_disconnect2 failed \n");
 
 	g_signal_emit(agent, signals[CLEAR], 0);
 
-	if (agent)
-		g_object_unref(agent);
+	g_object_unref(agent);
 
+	DBG("Terminate Bluetooth PBAP agent");
 	return ret;
 }
