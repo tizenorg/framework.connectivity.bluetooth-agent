@@ -865,19 +865,44 @@ static gboolean __bt_hfp_agent_make_call(const char *number)
 {
 	bundle *b;
 	char telnum[BT_MAX_TEL_NUM_STRING];
+	int ret;
 
 	b = bundle_create();
 	if (NULL == b)
 		return FALSE;
 
-	appsvc_set_operation(b, APPSVC_OPERATION_CALL);
+	ret = appsvc_set_operation(b, APPSVC_OPERATION_CALL);
+	if(ret < 0) {
+		ERR("Failed to success appsvc_set_operation: %d ", ret);
+		goto fail;
+	}
 	snprintf(telnum, sizeof(telnum), "tel:%s", number);
-	appsvc_set_uri(b, telnum);
-	appsvc_add_data(b, "ctindex", "-1");
-	appsvc_run_service(b, 0, NULL, NULL);
+
+	ret = appsvc_set_uri(b, telnum);
+	if(ret < 0) {
+		ERR("Failed to success appsvc_set_uri: %d ", ret);
+		goto fail;
+	}
+
+	ret = appsvc_add_data(b, "ctindex", "-1");
+	if(ret < 0) {
+		ERR("Failed to success appsvc_set_uri: %d ", ret);
+		goto fail;
+	}
+
+	ret = appsvc_run_service(b, 0, NULL, NULL);
+	if(ret < 0) {
+		ERR("callee failed: %d ", ret);
+		goto fail;
+	}
+
 	bundle_free(b);
 
 	return TRUE;
+fail:
+	bundle_free(b);
+
+	return FALSE;
 }
 
 static gboolean __bt_hfp_agent_make_video_call(const char *mo_number)
