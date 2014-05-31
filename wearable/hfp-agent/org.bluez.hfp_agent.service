@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.bluez.hfp_agent
+Exec=/usr/bin/bluetooth-hfp-agent

@@ -1,0 +1,25 @@
+<manifest>
+    <define>
+        <domain name="bt_agent"/>
+	<request>
+		<smack request="device::app_logging" type="w"/>
+		<smack request="device::sys_logging" type="w"/>
+		<smack request="system::vconf" type="rwxat"/>
+		<smack request="system::share" type="rwxat"/>
+		<smack request="sys-assert::core" type="rwxat"/>
+		<smack request="dbus" type="w"/>
+		<smack request="telephony_framework::api_sim" type="r"/>
+		<smack request="telephony_framework::api_sms" type="r"/>
+		<smack request="contacts-service::svc" type="rw"/>
+		<smack request="contacts-service::phonelog" type="rw"/>
+		<smack request="system::vconf_network" type="r"/>
+		<smack request="deviced::display" type="rw"/>
+	</request>
+	<permit>
+		<smack permit="dbus" type="rwx"/>
+	</permit>
+    </define>
+    <request>
+        <domain name="bt_agent"/>
+    </request>
+</manifest>
