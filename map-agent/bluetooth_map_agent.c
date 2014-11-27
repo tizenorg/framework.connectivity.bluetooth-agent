@@ -761,7 +761,7 @@ static void __bluetooth_map_msg_incoming_status_cb(msg_handle_t handle,
 
 	ret = msg_get_int_value(msg, MSG_MESSAGE_ID_INT, &msg_id);
 	if (ret != MSG_SUCCESS)
-		return;;
+		return;
 
 	uid = __bt_add_id(msg_id);
 

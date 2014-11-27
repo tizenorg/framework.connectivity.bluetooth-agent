@@ -1631,7 +1631,7 @@ static gchar *__bluetooth_pb_vcard_real_contact_valist_v21(gint person_id,
 
 	if (status != CONTACTS_ERROR_NONE) {
 		contacts_record_destroy(person, TRUE);
-		return NULL;;
+		return NULL;
 	}
 
 	if (f == 0)
