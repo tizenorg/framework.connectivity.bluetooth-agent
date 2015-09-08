@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.bluez.hf_agent
+Exec=/usr/bin/bluetooth-hf-agent
+User=root
