@@ -916,16 +916,18 @@ static char *__bt_prepare_msg_bmseg(msg_struct_t msg_info, gboolean attach,
 			msg_pdu = __bt_get_sms_pdu_from_msg_data(addr_value,
 							msg_body, dptime,
 							&msg_pdu_len);
-			DBG("msg_pdu_len = %d", msg_pdu_len);
+			if (msg_pdu) {
+				DBG("msg_pdu_len = %d", msg_pdu_len);
 
-			g_string_append_printf(msg, LENGTH, msg_pdu_len);
-			g_string_append(msg, MSG_BODY_BEGIN);
-			for (j = 0; j < msg_pdu_len; j++)
-				g_string_append_printf(msg, "%02x",
-								msg_pdu[j]);
+				g_string_append_printf(msg, LENGTH, msg_pdu_len);
+				g_string_append(msg, MSG_BODY_BEGIN);
+				for (j = 0; j < msg_pdu_len; j++)
+					g_string_append_printf(msg, "%02x",
+									msg_pdu[j]);
 
-			g_string_append(msg, MSG_BODY_END);
-			g_free(msg_pdu);
+				g_string_append(msg, MSG_BODY_END);
+				g_free(msg_pdu);
+			}
 		}
 	}
 
@@ -1063,8 +1065,6 @@ static struct message_info __bt_message_info_get(msg_struct_t msg_struct_handle)
 next:
 	msg_release_struct(&msg);
 	msg_release_struct(&send_opt);
-
-	g_free(msg_info.handle);
 
 	ret = msg_get_int_value(msg_struct_handle,
 				MSG_MESSAGE_DISPLAY_TIME_INT, &dptime);

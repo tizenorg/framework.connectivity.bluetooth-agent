@@ -26,6 +26,7 @@
 #include <signal.h>
 #include <sys/poll.h>
 #include <gio/gunixfdlist.h>
+#include <bundle_internal.h>
 #include "bluetooth-ag-agent.h"
 #include "bluetooth-ag-handler.h"
 
@@ -35,7 +36,7 @@
 #include <TelNetwork.h>
 #include <app.h>
 #include <aul.h>
-#include <system_info_internal.h>
+#include <system_info.h>
 
 #include "contacts.h"
 #include "appsvc.h"
@@ -78,8 +79,8 @@ static bt_ag_media_transport_state_t transport_state;
 #define VCONF_KEY_BT_LUNAR_ENABLED "db/wms/bt_loop_device_hfp_connected"
 #endif
 
-#if defined(TIZEN_WEARABLE) && defined(TIZEN_TELEPHONY_ENABLED)
-#define CALL_APP_ID "org.tizen.call"
+#if defined(TIZEN_WEARABLE) && defined(TIZEN_BT_HFP_AG_ENABLE)
+#define CALL_APP_ID "org.tizen.call-ui"
 #endif
 
 #if defined(TIZEN_SUPPORT_DUAL_HF)
@@ -497,11 +498,12 @@ static gboolean __bt_get_outgoing_callapp_type(int *callapp_type)
 	if (NULL == callapp_type)
 		return FALSE;
 
-#if defined(TIZEN_WEARABLE) && defined(TIZEN_TELEPHONY_ENABLED)
+#if defined(TIZEN_WEARABLE) && defined(TIZEN_BT_HFP_AG_ENABLE)
 	*callapp_type = BT_VOICE_CALL;
 	FN_END;
 	return TRUE;
 #else
+#if 0
 	int ret;
 	ret = vconf_get_int(
 			VCONFKEY_CISSAPPL_OUTGOING_CALL_TYPE_INT,
@@ -514,7 +516,9 @@ static gboolean __bt_get_outgoing_callapp_type(int *callapp_type)
 
 	INFO(" [%s] = [%d]\n",
 		VCONFKEY_CISSAPPL_OUTGOING_CALL_TYPE_INT, *callapp_type);
-
+#endif
+	/* The vconf value does not include in platform. */
+	*callapp_type = BT_VOICE_CALL;
 	FN_END;
 	return TRUE;
 #endif
@@ -527,11 +531,12 @@ static gboolean __bt_get_outgoing_call_condition(int *condition)
 	if (NULL == condition)
 		return FALSE;
 
-#if defined(TIZEN_WEARABLE) && defined(TIZEN_TELEPHONY_ENABLED)
+#if defined(TIZEN_WEARABLE) && defined(TIZEN_BT_HFP_AG_ENABLE)
 	*condition = BT_MO_ONLY_UNLOCKED;
 	FN_END;
 	return TRUE;
 #else
+#if 0
 	int ret;
 	ret = vconf_get_int(
 			VCONFKEY_CISSAPPL_OUTGOING_CALL_CONDITIONS_INT,
@@ -541,7 +546,9 @@ static gboolean __bt_get_outgoing_call_condition(int *condition)
 			VCONFKEY_CISSAPPL_OUTGOING_CALL_CONDITIONS_INT);
 		return FALSE;
 	}
-
+#endif
+	/* The vconf value does not include in platform. */
+	*condition = BT_MO_ONLY_UNLOCKED;
 	FN_END;
 	return TRUE;
 #endif
@@ -591,7 +598,7 @@ static gboolean __bt_ag_agent_make_call(const char *number)
 {
 	FN_START;
 
-#if defined(TIZEN_WEARABLE) && defined(TIZEN_TELEPHONY_ENABLED)
+#if defined(TIZEN_WEARABLE) && defined(TIZEN_BT_HFP_AG_ENABLE)
 	FN_END;
 	return __bt_ag_agent_launch_call_app(number);
 #else
@@ -914,7 +921,7 @@ gboolean _bt_ag_agent_threeway_call(unsigned int chld_value,
 	DBG("Value = %d", chld_value);
 	DBG("Sender = %s", sender);
 
-#if defined(TIZEN_WEARABLE) && defined(TIZEN_TELEPHONY_ENABLED)
+#if defined(TIZEN_WEARABLE) && defined(TIZEN_BT_HFP_AG_ENABLE)
 	/* Check if AG supports (i.e. ag_chld_str = "0,1,2") the requested CHLD;
 	if not return FALSE */
 	if (chld_value != 0 && chld_value != 1 && chld_value != 2)
@@ -1283,7 +1290,7 @@ void _bt_ag_agent_get_manufacturer_name(void *device)
 	char *manufacturer_name;
 	int ret;
 
-	ret = system_info_get_value_string(SYSTEM_INFO_KEY_MANUFACTURER,
+	ret = system_info_get_platform_string("http://tizen.org/system/manufacturer",
 						&manufacturer_name);
 	if (SYSTEM_INFO_ERROR_NONE != ret) {
 		ERR("Get manufacturer_name failed : %d", ret);
@@ -1385,7 +1392,7 @@ void _bt_ag_agent_get_model_name(void *device)
 	char *model_name;
 	int ret;
 
-	ret = system_info_get_value_string(SYSTEM_INFO_KEY_MODEL, &model_name);
+	ret = system_info_get_platform_string("http://tizen.org/system/model_name", &model_name);
 	if (SYSTEM_INFO_ERROR_NONE != ret) {
 		ERR("Get model_name failed: %d", ret);
 		if (NULL != model_name)
@@ -1410,7 +1417,7 @@ void _bt_ag_agent_get_revision_information(void *device)
 	char *revision_info;
 	int ret;
 
-	ret = system_info_get_value_string(SYSTEM_INFO_KEY_BUILD_STRING,
+	ret = system_info_get_platform_string("http://tizen.org/system/build.string",
 				&revision_info);
 	if (SYSTEM_INFO_ERROR_NONE != ret) {
 		ERR("Get revision_info failed: %d", ret);
@@ -1430,7 +1437,7 @@ void _bt_ag_agent_get_revision_information(void *device)
 	FN_END;
 }
 
-#if defined(TIZEN_WEARABLE) && defined(TIZEN_TELEPHONY_ENABLED)
+#if defined(TIZEN_WEARABLE) && defined(TIZEN_BT_HFP_AG_ENABLE)
 static gboolean __bt_ag_agent_launch_voice_dial(gboolean activate)
 {
 	FN_START;
@@ -2927,10 +2934,10 @@ static void __bt_ag_agent_method(GDBusConnection *connection,
 
 	if (g_strcmp0(method_name, "NewConnection") == 0) {
 		gint32 fd;
-		int index;
+		int index = 0;
 		GDBusMessage *msg;
 		GUnixFDList *fd_list;
-		GVariant *options;
+		GVariant *options = NULL;
 		int device_count = 0;
 		GSList *l;
 
@@ -3024,9 +3031,9 @@ static void __bt_ag_agent_method(GDBusConnection *connection,
 
 		g_dbus_method_invocation_return_value(invocation, NULL);
 	} else if (g_strcmp0(method_name, "IncomingCall") == 0) {
-		gchar *path;
-		gchar *number;
-		gint call_id;
+		gchar *path = NULL;
+		gchar *number = NULL;
+		gint call_id = 0;
 
 		g_variant_get(parameters, "(&s&si)", &path, &number, &call_id);
 
@@ -3041,9 +3048,9 @@ static void __bt_ag_agent_method(GDBusConnection *connection,
 			goto fail;
 		g_dbus_method_invocation_return_value(invocation, NULL);
 	} else if (g_strcmp0(method_name, "OutgoingCall") == 0) {
-		gchar *path;
-		gchar *number;
-		gint call_id;
+		gchar *path = NULL;
+		gchar *number = NULL;
+		gint call_id = 0;
 
 		g_variant_get(parameters, "(&s&si)", &path, &number, &call_id);
 
@@ -3058,10 +3065,10 @@ static void __bt_ag_agent_method(GDBusConnection *connection,
 			goto fail;
 		g_dbus_method_invocation_return_value(invocation, NULL);
 	} else if (g_strcmp0(method_name, "ChangeCallStatus") == 0) {
-		gchar *path;
-		gchar *number;
-		gint status;
-		gint call_id;
+		gchar *path = NULL;
+		gchar *number = NULL;
+		gint status = 0;
+		gint call_id = 0;
 		GSList *l;
 
 		g_variant_get(parameters, "(&s&sii)",
@@ -3314,7 +3321,7 @@ static void __bt_ag_agent_method(GDBusConnection *connection,
 		g_dbus_method_invocation_return_value(invocation,
 				g_variant_new("(q)", gain_value));
 	} else if (g_strcmp0(method_name, "SetSpeakerGain") == 0) {
-		guint16 gain;
+		guint16 gain = 0;
 		bt_ag_info_t *bt_ag_info = __bt_get_active_headset(remote_dev_path);
 
 		g_variant_get(parameters, "(q)", &gain);
@@ -3351,7 +3358,7 @@ static void __bt_ag_agent_method(GDBusConnection *connection,
 		g_dbus_method_invocation_return_value(invocation,
 				g_variant_new("(q)", gain_value));
 	} else if (g_strcmp0(method_name, "SetMicrophoneGain") == 0) {
-		guint16 gain;
+		guint16 gain = 0;
 		bt_ag_info_t *bt_ag_info = __bt_get_active_headset(remote_dev_path);
 
 		g_variant_get(parameters, "(q)", &gain);
@@ -4286,7 +4293,7 @@ static uint32_t __bt_ag_agent_get_ag_features(void)
 				BT_AG_FEATURE_EXTENDED_ERROR_RESULT_CODES;
 
 	wbs_en = TRUE;
-#if defined(TIZEN_TELEPHONY_ENABLED)
+#if defined(TIZEN_BT_HFP_AG_ENABLE)
 	hfp_ver = HFP_VERSION_1_6;
 #else
 	hfp_ver = HFP_VERSION_1_5;

@@ -4,7 +4,6 @@
 	<request>
 		<smack request="aul::launch" type="x"/>
 		<smack request="device::sys_logging" type="w"/>
-		<smack request="system::vconf" type="rwxat"/>
 		<smack request="system::share" type="rwxat"/>
 		<smack request="sys-assert::core" type="rwxat"/>
 		<smack request="dbus" type="rwx"/>
@@ -13,25 +12,35 @@
 		<smack request="msg-service::read" type="rw"/>
 		<smack request="msg-service::write" type="rw"/>
 		<smack request="msg-service::smstrigger" type="rw"/>
+		<smack request="tizen::vconf::telephony::admin" type="rl"/>
 		<smack request="telephony_framework::api_sim" type="r"/>
 		<smack request="telephony_framework::api_sms" type="r"/>
 		<smack request="telephony_framework::properties" type="rw"/>
 		<smack request="contacts-service::svc" type="rw"/>
 		<smack request="contacts-service::phonelog" type="rw"/>
-		<smack request="system::vconf_network" type="r"/>
+		<smack request="tizen::vconf::public::r" type="rl"/>
+		<smack request="tizen::vconf::public::r::platform::rw" type="rw"/>
 		<smack request="device::app_logging" type="w"/>
-		<smack request="system::vconf_inhouse" type="rwxat"/>
 		<smack request="deviced::display" type="rw"/>
 		<smack request="bt-service::public" type="w"/>
 		<smack request="bt-service::platform" type="rw"/>
+		<smack request="bluez" type="rw"/>
+		<smack request="contacts-service" type="wx"/>
+		<smack request="tizen::vconf::platform::rw" type="rl"/>
+		<smack request="tizen::vconf::setting::admin" type="rl"/>
+		<smack request="app-svc::db" type="rw"/>
+		<smack request="pkgmgr::db" type="rl"/>
 	</request>
 	<permit>
 		<smack permit="dbus" type="rwx"/>
+		<smack permit="telephony_framework" type="rw"/>
 	</permit>
     </define>
     <assign>
-        <filesystem path="/usr/share/dbus-1/services/org.bluez.map_agent.service" label="_"/>
-        <filesystem path="/usr/share/dbus-1/services/org.bluez.pb_agent.service" label="_"/>
+        <filesystem path="/usr/share/dbus-1/system-services/org.bluez.map_agent.service" label="_"/>
+        <filesystem path="/usr/share/dbus-1/system-services/org.bluez.pb_agent.service" label="_"/>
+        <filesystem path="/usr/share/dbus-1/system-services/org.bluez.hf_agent.service" label="_"/>
+        <filesystem path="/usr/share/dbus-1/system-services/org.bluez.ag_agent.service" label="_"/>
         <dbus name="org.bluez.ag_agent" own="bluetooth-ag-agent" bus="system">
             <node name="/org/bluez/hfp_agent">
                 <interface name="Org.Hfp.App.Interface">

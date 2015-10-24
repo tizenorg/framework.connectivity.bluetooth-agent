@@ -1,4 +1,5 @@
 [D-BUS Service]
 Name=org.bluez.ag_agent
 Exec=/usr/bin/bluetooth-ag-agent
-User=root
+User=system
+Group=system

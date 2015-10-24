@@ -124,7 +124,7 @@ static const char *agent_supported_character_set[] = {
 	"\"UTF-8\"", "\"IRA\""
 };
 
-#if defined(TIZEN_WEARABLE) && defined(TIZEN_TELEPHONY_ENABLED)
+#if defined(TIZEN_WEARABLE) && defined(TIZEN_BT_HFP_AG_ENABLE)
 static const char *ag_chld_str = "0,1,2";
 #else
 static const char *ag_chld_str = "0,1,2,3";
@@ -1391,7 +1391,7 @@ void _bt_hfp_vendor_cmd_request(const char *cmd,
 	if (NULL != t_sender_list) {
 		for (l = t_sender_list; l != NULL; l = l->next) {
 			sender_info = l->data;
-			error = _bt_ag_agent_vendor_cmd(t_device,
+			error = _bt_ag_agent_vendor_cmd(cmd,
 				sender_info->sender_path,
 				sender_info->sender_name);
 			if (error != BT_HFP_AGENT_ERROR_NONE)

@@ -600,12 +600,14 @@ struct bmsg_envelope *bmsg_get_envelope_data(gchar **block_data)
 {
 	FN_START;
 	gchar *sub_block_data;
+	gchar *benv_block_data;
 	struct bmsg_envelope *envelope_data;
 	struct benv_data *rec_data;
 
 	envelope_data = g_new0(struct bmsg_envelope, 1);
 
-	sub_block_data = bmsg_get_parse_sub_block(block_data, "BENV");
+	benv_block_data = bmsg_get_parse_sub_block(block_data, "BENV");
+	sub_block_data = benv_block_data;
 
 	while (sub_block_data) {
 
@@ -619,11 +621,12 @@ struct bmsg_envelope *bmsg_get_envelope_data(gchar **block_data)
 			rec_data = bmsg_get_env_encapsulation_data(
 							&sub_block_data);
 		}
-		g_free(sub_block_data);
-		sub_block_data = bmsg_get_parse_sub_block(&sub_block_data,
+		g_free(benv_block_data);
+		benv_block_data = bmsg_get_parse_sub_block(&block_data,
 									"BENV");
+		sub_block_data = benv_block_data;
 	}
-	g_free(sub_block_data);
+	g_free(benv_block_data);
 	FN_END;
 	return envelope_data;
 }

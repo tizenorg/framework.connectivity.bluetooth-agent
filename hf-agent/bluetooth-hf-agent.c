@@ -37,11 +37,12 @@
 #include <app_manager.h>
 #include <vconf.h>
 #include <vconf-keys.h>
+#include <bundle_internal.h>
 
 #include "bluetooth-hf-agent.h"
 
 #define BT_AGENT_SYSPOPUP_MAX_ATTEMPT 3
-#define CALL_APP_ID "org.tizen.call"
+#define CALL_APP_ID "org.tizen.call-ui"
 
 #define MAX_WAITING_DELAY 8
 #define READ_TX_POWER_MIN -30

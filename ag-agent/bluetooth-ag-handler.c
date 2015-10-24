@@ -637,6 +637,11 @@ int _bt_hfp_set_microphone_gain(bt_ag_info_t *hs,
 	int err;
 	char type = BT_HFP_MICROPHONE_GAIN;
 
+	if (hs == NULL) {
+		DBG("hs is NULL");
+		return BT_HFP_AGENT_ERROR_INVALID_PARAM;
+	}
+
 	err = __bt_headset_set_gain(hs, gain_value, type);
 	if (err < 0)
 		return BT_HFP_AGENT_ERROR_INTERNAL;

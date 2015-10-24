@@ -40,7 +40,7 @@ TARGET_LINK_LIBRARIES(${PROJECT_NAME} ${pkgs_ag_agent_LDFLAGS})
 
 INSTALL(TARGETS ${PROJECT_NAME} DESTINATION bin)
 INSTALL(FILES ${CMAKE_CURRENT_SOURCE_DIR}/org.bluez.ag_agent.service
-		DESTINATION share/dbus-1/services)
+		DESTINATION share/dbus-1/system-services)
 
 INSTALL(FILES ${CMAKE_CURRENT_SOURCE_DIR}/voice-recognition-blacklist
 		DESTINATION /opt/var/lib/bluetooth/)
